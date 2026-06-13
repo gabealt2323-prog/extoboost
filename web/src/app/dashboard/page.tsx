@@ -102,8 +102,6 @@ function DashboardContent() {
       setGeneratedUrl(data.gatewayUrl);
       setVerifyUrl(data.verifyApiUrl);
       fetchSavedLinks();
-    } catch {
-      setGenerating(false);
     } finally {
       setGenerating(false);
     }
@@ -123,6 +121,40 @@ function DashboardContent() {
   };
 
   const isUnlocked = user?.unlocked_until && new Date(user.unlocked_until) > new Date();
+
+  const maskEmail = (email: string) => email.replace(/(.{1,3})(.*)(@.*)/, (_, a, b, c) => a + '*'.repeat(b.length) + c);
+
+  const handleSendVerification = async () => {
+    setVerifyState('sending');
+    setVerifyError('');
+    try {
+      const token = localStorage.getItem('ks_token');
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/send-verification`, {
+        method: 'POST', headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json();
+      if (data.error) { setVerifyError(data.error); setVerifyState('idle'); return; }
+      setVerifyState('sent');
+    } catch { setVerifyError('Failed to send'); setVerifyState('idle'); }
+  };
+
+  const handleSubmitVerification = async () => {
+    if (verifyCode.length !== 6) return;
+    setVerifyState('verifying');
+    setVerifyError('');
+    try {
+      const token = localStorage.getItem('ks_token');
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/verify-email`, {
+        method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code: verifyCode }),
+      });
+      const data = await res.json();
+      if (data.error) { setVerifyError(data.error); setVerifyState('sent'); return; }
+      setUser({ ...user, verified: true });
+      setVerifyState('idle');
+      setVerifyCode('');
+    } catch { setVerifyError('Verification failed'); setVerifyState('sent'); }
+  };
 
   return (
     <>
@@ -144,19 +176,7 @@ function DashboardContent() {
                   Not Verified
                 </div>
                 {verifyState === 'idle' && (
-                  <button onClick={async () => {
-                    setVerifyState('sending');
-                    setVerifyError('');
-                    try {
-                      const token = localStorage.getItem('ks_token');
-                      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/send-verification`, {
-                        method: 'POST', headers: { Authorization: `Bearer ${token}` },
-                      });
-                      const data = await res.json();
-                      if (data.error) { setVerifyError(data.error); setVerifyState('idle'); return; }
-                      setVerifyState('sent');
-                    } catch { setVerifyError('Failed to send'); setVerifyState('idle'); }
-                  }} className="px-4 py-2 bg-primary-600 hover:bg-primary-700 text-white text-sm font-medium rounded-full transition-colors">
+                  <button onClick={handleSendVerification} className="px-4 py-2 bg-primary-600 hover:bg-primary-700 text-white text-sm font-medium rounded-full transition-colors">
                     Verify Email
                   </button>
                 )}
@@ -164,31 +184,20 @@ function DashboardContent() {
                   <div className="px-4 py-2 rounded-full bg-surface-200 text-gray-400 text-sm">Sending...</div>
                 )}
                 {verifyState === 'sent' && (
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="text" maxLength={6} placeholder="Enter 6-digit code"
-                      value={verifyCode} onChange={(e) => setVerifyCode(e.target.value.replace(/\D/g, ''))}
-                      className="w-36 px-3 py-2 bg-surface border border-surface-300 rounded-lg text-white text-sm text-center placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-primary-500"
-                    />
-                    <button onClick={async () => {
-                      if (verifyCode.length !== 6) return;
-                      setVerifyState('verifying');
-                      setVerifyError('');
-                      try {
-                        const token = localStorage.getItem('ks_token');
-                        const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/verify-email`, {
-                          method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-                          body: JSON.stringify({ code: verifyCode }),
-                        });
-                        const data = await res.json();
-                        if (data.error) { setVerifyError(data.error); setVerifyState('sent'); return; }
-                        setUser({ ...user, verified: true });
-                        setVerifyState('idle');
-                        setVerifyCode('');
-                      } catch { setVerifyError('Verification failed'); setVerifyState('sent'); }
-                    }} disabled={verifyCode.length !== 6} className="px-3 py-2 bg-green-600 hover:bg-green-700 disabled:bg-green-600/50 disabled:cursor-not-allowed text-white text-sm font-medium rounded-lg transition-colors">
-                      {verifyState === 'verifying' ? '...' : 'Submit'}
-                    </button>
+                  <div className="flex flex-col items-end gap-2">
+                    <p className="text-xs text-gray-400">
+                      Extoboost has sent an email to {maskEmail(user?.email || '')}
+                    </p>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="text" maxLength={6} placeholder="Enter 6-digit code"
+                        value={verifyCode} onChange={(e) => setVerifyCode(e.target.value.replace(/\D/g, ''))}
+                        className="w-36 px-3 py-2 bg-surface border border-surface-300 rounded-lg text-white text-sm text-center placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-primary-500"
+                      />
+                      <button onClick={handleSubmitVerification} disabled={verifyCode.length !== 6} className="px-3 py-2 bg-green-600 hover:bg-green-700 disabled:bg-green-600/50 disabled:cursor-not-allowed text-white text-sm font-medium rounded-lg transition-colors">
+                        {verifyState === 'verifying' ? '...' : 'Submit'}
+                      </button>
+                    </div>
                   </div>
                 )}
                 {verifyError && <span className="text-red-400 text-sm">{verifyError}</span>}
@@ -212,7 +221,7 @@ function DashboardContent() {
             <p className="text-xs text-gray-500">Your unique API key for programmatic access</p>
           </div>
 
-          <div className={`p-6 rounded-2xl bg-surface-100 border border-surface-300 space-y-6 ${!user?.verified ? 'opacity-40 pointer-events-none' : ''}`}>
+          <div className={`p-6 rounded-2xl bg-surface-100 border border-surface-300 space-y-6 ${!user?.verified ? 'opacity-40' : ''}`}>
             <h3 className="text-lg font-semibold text-white">Generate Player Gateway Link</h3>
             <p className="text-sm text-gray-400">
               Create a shareable gateway link for a player. They will complete an ad to receive their verification key.
