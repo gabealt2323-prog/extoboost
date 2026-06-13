@@ -378,6 +378,27 @@ app.get('/api/v1/verify-key', async (req, res) => {
   } catch { res.json({ success: false, error: 'Server error' }); }
 });
 
+app.get('/api/v1/verify-api-key', async (req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  const { key } = req.query;
+  if (!key) return res.json({ success: false, error: 'Missing key parameter' });
+  try {
+    const user = await getOne('SELECT id, name FROM users WHERE api_key = $1', [key]);
+    if (user) {
+      res.json({ success: true, valid: true, message: 'API key is valid', user: user.name });
+    } else {
+      res.json({ success: false, valid: false, error: 'Invalid API key' });
+    }
+  } catch { res.json({ success: false, error: 'Server error' }); }
+});
+
+app.options('/api/v1/verify-api-key', (req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.sendStatus(204);
+});
+
 app.options('/api/v1/verify-key', (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');

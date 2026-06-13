@@ -183,7 +183,7 @@ function DashboardContent() {
                 {verifyState === 'sending' && (
                   <div className="px-4 py-2 rounded-full bg-surface-200 text-gray-400 text-sm">Sending...</div>
                 )}
-                {verifyState === 'sent' && (
+                {(verifyState === 'sent' || verifyState === 'verifying') && (
                   <div className="flex flex-col items-end gap-2">
                     <p className="text-xs text-gray-400">
                       Extoboost has sent an email to {maskEmail(user?.email || '')}
