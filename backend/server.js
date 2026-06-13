@@ -47,7 +47,7 @@ if (ENV.SMTP_USER) {
 
 function adaptSql(sql) {
   let idx = 0;
-  return sql.replace(/\?/g, () => `$${++idx}`).replace(/datetime\('now'\)/g, 'NOW()');
+  return sql.replace(/\?/g, () => `$${++idx}`).replace(/datetime\('now'\)/g, 'NOW()').replace(/(\w+) > NOW\(\)/g, 'CAST($1 AS TIMESTAMP) > NOW()');
 }
 
 async function query(sql, params = []) {
@@ -115,8 +115,8 @@ async function runMigrations() {
   await query('CREATE INDEX IF NOT EXISTS idx_one_time_codes_status ON one_time_codes(status)');
   await query(`CREATE TABLE IF NOT EXISTS email_verification_codes (
     id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    code TEXT NOT NULL, expires_at TEXT NOT NULL, used BOOLEAN NOT NULL DEFAULT FALSE,
-    created_at TEXT NOT NULL DEFAULT NOW()
+    code TEXT NOT NULL, expires_at TIMESTAMP NOT NULL, used BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMP NOT NULL DEFAULT NOW()
   )`);
   await query('CREATE INDEX IF NOT EXISTS idx_email_verification_codes_user_id ON email_verification_codes(user_id)');
   await query(`CREATE TABLE IF NOT EXISTS gateway_tokens (
