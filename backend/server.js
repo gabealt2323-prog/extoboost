@@ -385,11 +385,7 @@ app.get('/api/v1/verify-api-key', async (req, res) => {
   try {
     const gt = await getOne("SELECT gt.*, u.unlocked_until FROM gateway_tokens gt JOIN users u ON u.id = gt.admin_user_id WHERE gt.code = $1 AND gt.status = 'completed' AND u.unlocked_until > NOW()", [key.toUpperCase()]);
     if (gt) {
-      return res.json({ success: true, valid: true, type: 'gateway_key', message: 'Key is valid', expiresAt: gt.unlocked_until });
-    }
-    const user = await getOne('SELECT id, name FROM users WHERE api_key = $1', [key]);
-    if (user) {
-      return res.json({ success: true, valid: true, type: 'api_key', message: 'API key is valid', user: user.name });
+      return res.json({ success: true, valid: true, message: 'Key is valid', expiresAt: gt.unlocked_until });
     }
     res.json({ success: false, valid: false, error: 'Invalid key' });
   } catch { res.json({ success: false, error: 'Server error' }); }

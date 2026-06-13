@@ -111,7 +111,6 @@ export default function SettingsSidebar({ user, open, onClose, onUpdate }: {
   };
 
   const isImg = user?.profile_icon?.startsWith('data:');
-  const verifyApiLink = user?.api_key ? `${process.env.NEXT_PUBLIC_API_URL}/verify-api-key?key=${user.api_key}` : '';
 
   return (
     <>
@@ -175,12 +174,12 @@ export default function SettingsSidebar({ user, open, onClose, onUpdate }: {
                   </div>
                 </div>
 
-                {verifyApiLink && (
+                {process.env.NEXT_PUBLIC_API_URL && (
                   <div className="space-y-2">
-                    <label className="text-sm text-gray-400">API Verify Link</label>
-                    <p className="text-xs text-gray-500">Call this endpoint to check if an API key is valid</p>
-                    <code className="block px-3 py-2 bg-surface rounded-lg text-sm font-mono text-green-300 truncate">{verifyApiLink}</code>
-                    <button onClick={() => { navigator.clipboard.writeText(verifyApiLink); setMessage('Copied!'); }} className="text-xs text-primary-400 hover:text-primary-300">Copy</button>
+                    <label className="text-sm text-gray-400">Key Verify Link</label>
+                    <p className="text-xs text-gray-500">Script calls this with the player's 16-char key</p>
+                    <code className="block px-3 py-2 bg-surface rounded-lg text-sm font-mono text-green-300 truncate">{`${process.env.NEXT_PUBLIC_API_URL}/verify-api-key?key=PLAYER_KEY`}</code>
+                    <button onClick={() => { navigator.clipboard.writeText(`${process.env.NEXT_PUBLIC_API_URL}/verify-api-key?key=PLAYER_KEY`); setMessage('Copied!'); }} className="text-xs text-primary-400 hover:text-primary-300">Copy</button>
                   </div>
                 )}
 
