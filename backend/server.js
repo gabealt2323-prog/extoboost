@@ -383,9 +383,9 @@ app.get('/api/v1/verify-api-key', async (req, res) => {
   const { key } = req.query;
   if (!key) return res.json({ success: false, error: 'Missing key parameter' });
   try {
-    const codeResult = await getOne("SELECT * FROM one_time_codes WHERE code = $1 AND status = 'completed' AND expires_at > NOW()", [key.toUpperCase()]);
-    if (codeResult) {
-      return res.json({ success: true, valid: true, type: 'one_time_code', message: 'Key is valid' });
+    const gt = await getOne("SELECT gt.*, u.unlocked_until FROM gateway_tokens gt JOIN users u ON u.id = gt.admin_user_id WHERE gt.code = $1 AND gt.status = 'completed' AND u.unlocked_until > NOW()", [key.toUpperCase()]);
+    if (gt) {
+      return res.json({ success: true, valid: true, type: 'gateway_key', message: 'Key is valid', expiresAt: gt.unlocked_until });
     }
     const user = await getOne('SELECT id, name FROM users WHERE api_key = $1', [key]);
     if (user) {
