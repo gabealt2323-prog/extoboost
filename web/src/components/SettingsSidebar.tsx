@@ -174,15 +174,6 @@ export default function SettingsSidebar({ user, open, onClose, onUpdate }: {
                   </div>
                 </div>
 
-                {process.env.NEXT_PUBLIC_API_URL && (
-                  <div className="space-y-2">
-                    <label className="text-sm text-gray-400">Key Verify Link</label>
-                    <p className="text-xs text-gray-500">Script calls this with the player's 16-char key</p>
-                    <code className="block px-3 py-2 bg-surface rounded-lg text-sm font-mono text-green-300 truncate">{`${process.env.NEXT_PUBLIC_API_URL}/verify-api-key?key=PLAYER_KEY`}</code>
-                    <button onClick={() => { navigator.clipboard.writeText(`${process.env.NEXT_PUBLIC_API_URL}/verify-api-key?key=PLAYER_KEY`); setMessage('Copied!'); }} className="text-xs text-primary-400 hover:text-primary-300">Copy</button>
-                  </div>
-                )}
-
                 <div className="pt-4 border-t border-surface-300 space-y-4">
                   <label className="text-sm text-gray-400">Gateway Link Generator</label>
                   <div className="flex flex-col gap-3">

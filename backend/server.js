@@ -267,7 +267,7 @@ app.post('/api/v1/generate-token', requireAuth, async (req, res) => {
 
     await run('INSERT INTO gateway_tokens (id, player_id, provider, admin_user_id, status, ad_url) VALUES ($1, $2, $3, $4, $5, $6)',
       [token, playerId, provider, req.user.id, 'pending', adUrl || '']);
-    const verifyApiUrl = `${req.protocol}://${req.get('host')}/api/v1/verify-key?player_id=${encodeURIComponent(playerId)}`;
+    const verifyApiUrl = `${req.protocol}://${req.get('host')}/api/v1/verify-api-key/${token}`;
     res.json({ token, gatewayUrl: `${ENV.WEB_APP_URL}/gateway/${token}`, verifyApiUrl });
   } catch (err) {
     console.error('Generate token error:', err);
@@ -378,12 +378,13 @@ app.get('/api/v1/verify-key', async (req, res) => {
   } catch { res.json({ success: false, error: 'Server error' }); }
 });
 
-app.get('/api/v1/verify-api-key', async (req, res) => {
+app.get('/api/v1/verify-api-key/:token', async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
+  const { token } = req.params;
   const { key } = req.query;
   if (!key) return res.json({ success: false, error: 'Missing key parameter' });
   try {
-    const gt = await getOne("SELECT gt.*, u.unlocked_until FROM gateway_tokens gt JOIN users u ON u.id = gt.admin_user_id WHERE gt.code = $1 AND gt.status = 'completed' AND u.unlocked_until > NOW()", [key.toUpperCase()]);
+    const gt = await getOne("SELECT gt.*, u.unlocked_until FROM gateway_tokens gt JOIN users u ON u.id = gt.admin_user_id WHERE gt.id = $1 AND gt.code = $2 AND gt.status = 'completed' AND u.unlocked_until > NOW()", [token, key.toUpperCase()]);
     if (gt) {
       return res.json({ success: true, valid: true, message: 'Key is valid', expiresAt: gt.unlocked_until });
     }
@@ -391,7 +392,7 @@ app.get('/api/v1/verify-api-key', async (req, res) => {
   } catch { res.json({ success: false, error: 'Server error' }); }
 });
 
-app.options('/api/v1/verify-api-key', (req, res) => {
+app.options('/api/v1/verify-api-key/:token', (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
