@@ -1,18 +1,35 @@
 'use client';
 
-import { Suspense, useEffect } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 
 function LoginContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const [signedOutReason, setSignedOutReason] = useState('');
 
   useEffect(() => {
     const error = searchParams.get('error');
-    if (error) {
-      console.error('OAuth error:', error);
+    if (error) console.error('OAuth error:', error);
+
+    const reason = searchParams.get('reason');
+    if (reason === 'password_changed') {
+      setSignedOutReason('Your account password has been changed, you have been signed out.');
+    } else if (reason === 'session_expired') {
+      setSignedOutReason('Your session has expired, please sign in again.');
     }
-  }, [searchParams]);
+
+    const token = localStorage.getItem('ks_token');
+    if (!token) return;
+    fetch(`${process.env.NEXT_PUBLIC_API_URL}/auth/me`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then((r) => r.json())
+      .then((data) => {
+        if (!data.error) router.replace('/dashboard');
+      })
+      .catch(() => {});
+  }, [router, searchParams]);
 
   const handleGoogleLogin = () => {
     window.location.href = `${process.env.NEXT_PUBLIC_API_URL}/auth/google`;
@@ -20,6 +37,11 @@ function LoginContent() {
 
   return (
     <div className="max-w-sm w-full space-y-8">
+      {signedOutReason && (
+        <div className="px-4 py-3 rounded-xl bg-red-500/10 border border-red-500/30 text-red-400 text-sm text-center">
+          {signedOutReason}
+        </div>
+      )}
       <div className="text-center space-y-2">
         <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-primary-600/20 border border-primary-500/30 mb-4">
           <svg className="w-8 h-8 text-primary-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">

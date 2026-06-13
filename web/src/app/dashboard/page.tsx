@@ -63,7 +63,7 @@ function DashboardContent() {
       .then((data) => {
         if (data.error) {
           localStorage.removeItem('ks_token');
-          router.push('/login');
+          router.push('/login?reason=password_changed');
           return;
         }
         setUser(data);
