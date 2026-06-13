@@ -18,6 +18,19 @@ function DashboardContent() {
   const [generatedUrl, setGeneratedUrl] = useState('');
   const [verifyUrl, setVerifyUrl] = useState('');
   const [copied, setCopied] = useState('');
+  const [savedLinks, setSavedLinks] = useState<any[]>([]);
+
+  const fetchSavedLinks = async () => {
+    const token = localStorage.getItem('ks_token');
+    if (!token) return;
+    try {
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/gateway-tokens`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json();
+      if (!data.error) setSavedLinks(data);
+    } catch {}
+  };
 
   useEffect(() => {
     const token = searchParams.get('token') || localStorage.getItem('ks_token');
@@ -61,6 +74,10 @@ function DashboardContent() {
       .finally(() => setLoading(false));
   }, [router, searchParams]);
 
+  useEffect(() => {
+    if (user) fetchSavedLinks();
+  }, [user]);
+
   const handleGenerate = async () => {
     if (!playerId.trim()) return;
     const token = localStorage.getItem('ks_token');
@@ -79,6 +96,7 @@ function DashboardContent() {
       if (data.error) throw new Error(data.error);
       setGeneratedUrl(data.gatewayUrl);
       setVerifyUrl(data.verifyApiUrl);
+      fetchSavedLinks();
     } catch {
       setGenerating(false);
     } finally {
@@ -237,6 +255,40 @@ function DashboardContent() {
               </div>
             )}
           </div>
+
+          {savedLinks.length > 0 && (
+            <div className="p-6 rounded-2xl bg-surface-100 border border-surface-300 space-y-4">
+              <h3 className="text-lg font-semibold text-white">Saved Links ({savedLinks.length})</h3>
+              <div className="space-y-3 max-h-96 overflow-y-auto">
+                {savedLinks.map((link) => (
+                  <div key={link.id} className="p-3 rounded-xl bg-surface border border-surface-300 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm font-medium text-white">{link.player_id}</span>
+                      <span className={`text-xs px-2 py-0.5 rounded-full ${
+                        link.status === 'completed' ? 'bg-green-500/10 text-green-400 border border-green-500/30' :
+                        link.status === 'expired' ? 'bg-red-500/10 text-red-400 border border-red-500/30' :
+                        'bg-yellow-500/10 text-yellow-400 border border-yellow-500/30'
+                      }`}>{link.status}</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <code className="flex-1 px-2 py-1 bg-surface-200 rounded text-xs font-mono text-gray-400 truncate">
+                        {`${window.location.origin}/gateway/${link.id}`}
+                      </code>
+                      <button
+                        onClick={() => { navigator.clipboard.writeText(`${window.location.origin}/gateway/${link.id}`); }}
+                        className="px-2 py-1 bg-surface-200 hover:bg-surface-300 text-xs text-gray-300 rounded transition-colors"
+                      >
+                        Copy
+                      </button>
+                    </div>
+                    <div className="text-xs text-gray-500">
+                      {link.provider} &middot; {new Date(link.created_at).toLocaleString()}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {isUnlocked && (
             <div className="p-6 rounded-2xl bg-surface-100 border border-surface-300 space-y-4">

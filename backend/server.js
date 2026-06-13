@@ -282,6 +282,16 @@ app.post('/api/v1/generate-token', requireAuth, async (req, res) => {
   }
 });
 
+app.get('/api/v1/gateway-tokens', requireAuth, (req, res) => {
+  try {
+    const tokens = getAll('SELECT * FROM gateway_tokens WHERE admin_user_id = ? ORDER BY created_at DESC', [req.user.id]);
+    res.json(tokens);
+  } catch (err) {
+    console.error('List tokens error:', err);
+    res.status(500).json({ error: 'Failed to fetch tokens' });
+  }
+});
+
 app.get('/api/v1/gateway-token/:token', (req, res) => {
   try {
     const { token } = req.params;
