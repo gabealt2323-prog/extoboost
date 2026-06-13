@@ -262,6 +262,8 @@ app.post('/api/v1/generate-token', requireAuth, async (req, res) => {
     const { playerId, provider } = req.body;
     if (!playerId || !provider) return res.status(400).json({ error: 'playerId and provider are required' });
     if (!['linkvertise', 'lootlabs'].includes(provider)) return res.status(400).json({ error: 'provider must be linkvertise or lootlabs' });
+    const count = getOne('SELECT COUNT(*) as count FROM gateway_tokens WHERE admin_user_id = ?', [req.user.id]);
+    if (count && count.count >= 10) return res.status(400).json({ error: 'Limit reached. You can only create up to 10 gateway links.' });
     const token = crypto.randomBytes(16).toString('hex');
     const callbackUrl = `${req.protocol}://${req.get('host')}/api/v1/ad-callback?token=${token}`;
 

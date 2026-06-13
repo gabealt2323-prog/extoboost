@@ -3,6 +3,7 @@
 import { useEffect, useState, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import ApiKeyModal from '@/components/ApiKeyModal';
+import NavBar from '@/components/NavBar';
 
 function DashboardContent() {
   const router = useRouter();
@@ -112,30 +113,18 @@ function DashboardContent() {
     );
   }
 
+  const handleSignOut = () => {
+    localStorage.removeItem('ks_token');
+    router.push('/login');
+  };
+
   const isUnlocked = user?.unlocked_until && new Date(user.unlocked_until) > new Date();
 
   return (
     <>
       <div className="min-h-screen bg-surface">
-        <header className="border-b border-surface-300 bg-surface-100/50 backdrop-blur-sm">
-          <div className="max-w-4xl mx-auto px-6 py-4 flex items-center justify-between">
-            <h1 className="text-xl font-bold text-white">Extoboost</h1>
-            <div className="flex items-center gap-4">
-              <span className="text-sm text-gray-400">{user?.email}</span>
-              <button
-                onClick={() => {
-                  localStorage.removeItem('ks_token');
-                  router.push('/login');
-                }}
-                className="text-sm text-gray-400 hover:text-white transition-colors"
-              >
-                Sign out
-              </button>
-            </div>
-          </div>
-        </header>
-
-        <main className="max-w-4xl mx-auto px-6 py-12 space-y-8">
+        <NavBar userName={user?.email} onSignOut={handleSignOut} />
+        <main className="max-w-5xl mx-auto px-6 py-12 space-y-8">
           <div className="flex items-center justify-between">
             <div>
               <h2 className="text-3xl font-bold text-white">Welcome, {user?.name}</h2>
