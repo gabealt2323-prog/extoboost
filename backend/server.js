@@ -274,7 +274,8 @@ app.post('/api/v1/generate-token', requireAuth, async (req, res) => {
 
     run('INSERT INTO gateway_tokens (id, player_id, provider, admin_user_id, status, ad_url) VALUES (?, ?, ?, ?, ?, ?)',
       [token, playerId, provider, req.user.id, 'pending', adUrl || '']);
-    res.json({ token, gatewayUrl: `${ENV.WEB_APP_URL}/gateway/${token}` });
+    const verifyApiUrl = `${req.protocol}://${req.get('host')}/api/v1/verify-key?player_id=${encodeURIComponent(playerId)}`;
+    res.json({ token, gatewayUrl: `${ENV.WEB_APP_URL}/gateway/${token}`, verifyApiUrl });
   } catch (err) {
     console.error('Generate token error:', err);
     res.status(500).json({ error: 'Failed to generate token' });

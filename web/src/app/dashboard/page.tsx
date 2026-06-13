@@ -16,7 +16,8 @@ function DashboardContent() {
   const [provider, setProvider] = useState('linkvertise');
   const [generating, setGenerating] = useState(false);
   const [generatedUrl, setGeneratedUrl] = useState('');
-  const [copied, setCopied] = useState(false);
+  const [verifyUrl, setVerifyUrl] = useState('');
+  const [copied, setCopied] = useState('');
 
   useEffect(() => {
     const token = searchParams.get('token') || localStorage.getItem('ks_token');
@@ -66,6 +67,7 @@ function DashboardContent() {
     if (!token) return;
     setGenerating(true);
     setGeneratedUrl('');
+    setVerifyUrl('');
     setCopied(false);
     try {
       const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/generate-token`, {
@@ -76,20 +78,12 @@ function DashboardContent() {
       const data = await res.json();
       if (data.error) throw new Error(data.error);
       setGeneratedUrl(data.gatewayUrl);
+      setVerifyUrl(data.verifyApiUrl);
     } catch {
       setGenerating(false);
     } finally {
       setGenerating(false);
     }
-  };
-
-  const handleCopy = async () => {
-    if (!generatedUrl) return;
-    try {
-      await navigator.clipboard.writeText(generatedUrl);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch {}
   };
 
   if (loading) {
@@ -202,21 +196,43 @@ function DashboardContent() {
             </button>
 
             {generatedUrl && (
-              <div className="p-4 rounded-xl bg-surface border border-primary-500/30 space-y-3">
-                <div className="flex items-center justify-between">
-                  <p className="text-sm font-medium text-primary-400">Gateway Link</p>
-                  <span className="text-xs text-gray-500">Share this with your player</span>
+              <div className="p-4 rounded-xl bg-surface border border-primary-500/30 space-y-4">
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <p className="text-sm font-medium text-primary-400">Gateway Link</p>
+                    <span className="text-xs text-gray-500">Share this with your player</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <code className="flex-1 px-3 py-2 bg-surface-200 rounded-lg text-sm font-mono text-white truncate">
+                      {generatedUrl}
+                    </code>
+                    <button
+                      onClick={() => { navigator.clipboard.writeText(generatedUrl); setCopied('gateway'); setTimeout(() => setCopied(''), 2000); }}
+                      className="px-4 py-2 bg-primary-600 hover:bg-primary-700 text-white text-sm font-medium rounded-lg transition-colors whitespace-nowrap"
+                    >
+                      {copied === 'gateway' ? 'Copied!' : 'Copy'}
+                    </button>
+                  </div>
                 </div>
-                <div className="flex items-center gap-2">
-                  <code className="flex-1 px-3 py-2 bg-surface-200 rounded-lg text-sm font-mono text-white truncate">
-                    {generatedUrl}
-                  </code>
-                  <button
-                    onClick={handleCopy}
-                    className="px-4 py-2 bg-primary-600 hover:bg-primary-700 text-white text-sm font-medium rounded-lg transition-colors whitespace-nowrap"
-                  >
-                    {copied ? 'Copied!' : 'Copy'}
-                  </button>
+                <div className="border-t border-surface-300 pt-4">
+                  <div className="flex items-center justify-between mb-1">
+                    <p className="text-sm font-medium text-green-400">Verify API Link</p>
+                    <span className="text-xs text-gray-500">For your key grabber / executor</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <code className="flex-1 px-3 py-2 bg-surface-200 rounded-lg text-sm font-mono text-green-300 truncate">
+                      {verifyUrl}
+                    </code>
+                    <button
+                      onClick={() => { navigator.clipboard.writeText(verifyUrl); setCopied('verify'); setTimeout(() => setCopied(''), 2000); }}
+                      className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white text-sm font-medium rounded-lg transition-colors whitespace-nowrap"
+                    >
+                      {copied === 'verify' ? 'Copied!' : 'Copy'}
+                    </button>
+                  </div>
+                  <p className="text-xs text-gray-500 mt-2">
+                    Grabber calls <code className="text-gray-400">GET {verifyUrl}&amp;key=CODE</code> to check if the key is valid
+                  </p>
                 </div>
               </div>
             )}
