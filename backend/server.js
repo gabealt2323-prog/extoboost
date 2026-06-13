@@ -38,14 +38,14 @@ const SMTP_PASS = ENV.SMTP_PASS;
 
 function sendEmailViaBrevo(to, subject, text) {
   return new Promise((resolve, reject) => {
-    const data = JSON.stringify({ sender: { email: ENV.SMTP_USER || 'noreply@extoboost.com' }, to: [{ email: to }], subject, textContent: text });
+    const data = JSON.stringify({ sender: { email: ENV.SMTP_USER || 'noreply@extoboost.com', name: 'Extoboost' }, to: [{ email: to }], subject, textContent: text });
     const req = https.request('https://api.brevo.com/v3/smtp/email', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'api-key': SMTP_PASS, 'Content-Length': Buffer.byteLength(data) },
     }, (res) => {
       let body = '';
       res.on('data', (chunk) => body += chunk);
-      res.on('end', () => { resolve(body); });
+      res.on('end', () => { console.log('Brevo API response', res.statusCode, body); resolve(body); });
     });
     req.on('error', reject);
     req.write(data);
