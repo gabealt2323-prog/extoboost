@@ -414,13 +414,18 @@ app.post('/api/v1/send-verification', requireAuth, async (req, res) => {
     await run('INSERT INTO email_verification_codes (id, user_id, code, expires_at) VALUES ($1, $2, $3, $4)',
       [crypto.randomUUID(), req.user.id, code, expiresAt]);
     if (ENV.SMTP_USER) {
+      console.log('Attempting to send email to', req.user.email, 'via', ENV.SMTP_HOST);
       mailer.sendMail({
         from: ENV.EMAIL_FROM, to: req.user.email,
         subject: 'Extoboost - Email Verification Code',
         text: `Your verification code is: ${code}\n\nThis code expires in 10 minutes.`,
-      }).catch(err => console.error('Mail send error:', err));
+      }).then(() => console.log('Email sent successfully to', req.user.email))
+        .catch(err => console.error('Mail send error:', err));
+      res.json({ sent: true, debug: 'smtp_attempted' });
+    } else {
+      console.warn('SMTP_USER not configured — email not sent to', req.user.email);
+      res.json({ sent: false, error: 'SMTP not configured on server' });
     }
-    res.json({ sent: true });
   } catch (err) { console.error('Send verification error:', err); res.status(500).json({ sent: false, error: 'Failed to send verification email' }); }
 });
 
