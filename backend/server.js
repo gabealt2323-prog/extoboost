@@ -26,7 +26,7 @@ const ENV = {
   LINKVERTISE_PUBLISHER_ID: process.env.LINKVERTISE_PUBLISHER_ID || '',
   LOOTLABS_API_KEY: process.env.LOOTLABS_API_KEY || '',
   WEB_APP_URL: process.env.WEB_APP_URL || 'http://localhost:3000',
-  SMTP_HOST: process.env.SMTP_HOST || 'smtp.gmail.com',
+  SMTP_HOST: process.env.SMTP_HOST || 'smtp-relay.brevo.com',
   SMTP_PORT: parseInt(process.env.SMTP_PORT || '587', 10),
   SMTP_USER: process.env.SMTP_USER || '',
   SMTP_PASS: process.env.SMTP_PASS || '',
@@ -414,14 +414,14 @@ app.post('/api/v1/send-verification', requireAuth, async (req, res) => {
     await run('INSERT INTO email_verification_codes (id, user_id, code, expires_at) VALUES ($1, $2, $3, $4)',
       [crypto.randomUUID(), req.user.id, code, expiresAt]);
     if (ENV.SMTP_USER) {
-      await mailer.sendMail({
+      mailer.sendMail({
         from: ENV.EMAIL_FROM, to: req.user.email,
         subject: 'Extoboost - Email Verification Code',
         text: `Your verification code is: ${code}\n\nThis code expires in 10 minutes.`,
-      });
+      }).catch(err => console.error('Mail send error:', err));
     }
     res.json({ sent: true });
-  } catch { res.status(500).json({ sent: false, error: 'Failed to send verification email' }); }
+  } catch (err) { console.error('Send verification error:', err); res.status(500).json({ sent: false, error: 'Failed to send verification email' }); }
 });
 
 app.post('/api/v1/verify-email', requireAuth, async (req, res) => {
