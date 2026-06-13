@@ -9,14 +9,14 @@ const crypto = require('crypto');
 const path = require('path');
 const fs = require('fs');
 const https = require('https');
-const initSqlJs = require('sql.js');
+const { Pool } = require('pg');
 
 require('dotenv').config({ path: path.resolve(__dirname, '.env') });
 
 const ENV = {
   PORT: parseInt(process.env.PORT || '4000', 10),
   NODE_ENV: process.env.NODE_ENV || 'development',
-  DATABASE_PATH: process.env.DATABASE_PATH || path.resolve(__dirname, 'data/extoboost.db'),
+  DATABASE_URL: process.env.DATABASE_URL,
   GOOGLE_CLIENT_ID: process.env.GOOGLE_CLIENT_ID || 'placeholder',
   GOOGLE_CLIENT_SECRET: process.env.GOOGLE_CLIENT_SECRET || 'placeholder',
   GOOGLE_CALLBACK_URL: process.env.GOOGLE_CALLBACK_URL || 'http://localhost:4000/api/v1/auth/google/callback',
@@ -27,41 +27,33 @@ const ENV = {
   WEB_APP_URL: process.env.WEB_APP_URL || 'http://localhost:3000',
 };
 
-let db;
+const pool = new Pool({ connectionString: ENV.DATABASE_URL, ssl: { rejectUnauthorized: false } });
 
-function saveDb() {
-  const data = db.export();
-  const buffer = Buffer.from(data);
-  const dbDir = path.dirname(ENV.DATABASE_PATH);
-  if (!fs.existsSync(dbDir)) fs.mkdirSync(dbDir, { recursive: true });
-  fs.writeFileSync(ENV.DATABASE_PATH, buffer);
+function adaptSql(sql) {
+  let idx = 0;
+  return sql.replace(/\?/g, () => `$${++idx}`).replace(/datetime\('now'\)/g, 'NOW()');
 }
 
-function query(sql, params = []) {
-  const stmt = db.prepare(sql);
-  const isSelect = sql.trim().toUpperCase().startsWith('SELECT');
-  if (isSelect) {
-    stmt.bind(params);
-    const rows = [];
-    while (stmt.step()) {
-      rows.push(stmt.getAsObject());
-    }
-    stmt.free();
-    return rows;
-  }
-  stmt.run(params);
-  stmt.free();
-  saveDb();
-  return [];
+async function query(sql, params = []) {
+  const client = await pool.connect();
+  try {
+    const result = await client.query(adaptSql(sql), params);
+    if (sql.trim().toUpperCase().startsWith('SELECT')) return result.rows;
+    return { changes: result.rowCount };
+  } finally { client.release(); }
 }
 
-function getOne(sql, params = []) {
-  const rows = query(sql, params);
+async function getOne(sql, params = []) {
+  const rows = await query(sql, params);
   return rows.length > 0 ? rows[0] : null;
 }
 
-function run(sql, params = []) {
-  query(sql, params);
+function getAll(sql, params = []) {
+  return query(sql, params);
+}
+
+async function run(sql, params = []) {
+  await query(sql, params);
 }
 
 function generateOneTimeCode() {
@@ -78,61 +70,40 @@ function generateToken(userId) {
   return jwt.sign({ userId }, ENV.JWT_SECRET, { expiresIn: '7d' });
 }
 
-function runMigrations() {
-  db.run(`
-    CREATE TABLE IF NOT EXISTS users (
-      id TEXT PRIMARY KEY,
-      google_id TEXT UNIQUE NOT NULL,
-      email TEXT UNIQUE NOT NULL,
-      name TEXT NOT NULL,
-      api_key TEXT UNIQUE NOT NULL,
-      unlocked_until TEXT,
-      created_at TEXT NOT NULL DEFAULT (datetime('now'))
-    )
-  `);
-  db.run(`
-    CREATE TABLE IF NOT EXISTS sessions (
-      id TEXT PRIMARY KEY,
-      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-      token TEXT UNIQUE NOT NULL,
-      expires_at TEXT NOT NULL,
-      created_at TEXT NOT NULL DEFAULT (datetime('now'))
-    )
-  `);
-  db.run(`
-    CREATE TABLE IF NOT EXISTS one_time_codes (
-      id TEXT PRIMARY KEY,
-      code TEXT UNIQUE NOT NULL,
-      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-      session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-      status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','completed','expired')),
-      expires_at TEXT NOT NULL,
-      created_at TEXT NOT NULL DEFAULT (datetime('now'))
-    )
-  `);
-  db.run('CREATE INDEX IF NOT EXISTS idx_users_google_id ON users(google_id)');
-  db.run('CREATE INDEX IF NOT EXISTS idx_users_api_key ON users(api_key)');
-  db.run('CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id)');
-  db.run('CREATE INDEX IF NOT EXISTS idx_sessions_token ON sessions(token)');
-  db.run('CREATE INDEX IF NOT EXISTS idx_one_time_codes_code ON one_time_codes(code)');
-  db.run('CREATE INDEX IF NOT EXISTS idx_one_time_codes_user_id ON one_time_codes(user_id)');
-  db.run('CREATE INDEX IF NOT EXISTS idx_one_time_codes_status ON one_time_codes(status)');
-  db.run(`
-    CREATE TABLE IF NOT EXISTS gateway_tokens (
-      id TEXT PRIMARY KEY,
-      player_id TEXT NOT NULL,
-      provider TEXT NOT NULL CHECK(provider IN ('linkvertise','lootlabs')),
-      admin_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-      status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','completed','expired')),
-      code TEXT,
-      created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      completed_at TEXT
-    )
-  `);
-  db.run('CREATE INDEX IF NOT EXISTS idx_gateway_tokens_status ON gateway_tokens(status)');
-  db.run('CREATE INDEX IF NOT EXISTS idx_gateway_tokens_admin ON gateway_tokens(admin_user_id)');
-  try { db.run('ALTER TABLE gateway_tokens ADD COLUMN ad_url TEXT'); } catch {}
-  saveDb();
+async function runMigrations() {
+  await query(`CREATE TABLE IF NOT EXISTS users (
+    id TEXT PRIMARY KEY, google_id TEXT UNIQUE NOT NULL, email TEXT UNIQUE NOT NULL,
+    name TEXT NOT NULL, api_key TEXT UNIQUE NOT NULL, unlocked_until TEXT,
+    created_at TEXT NOT NULL DEFAULT NOW()
+  )`);
+  await query(`CREATE TABLE IF NOT EXISTS sessions (
+    id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    token TEXT UNIQUE NOT NULL, expires_at TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT NOW()
+  )`);
+  await query(`CREATE TABLE IF NOT EXISTS one_time_codes (
+    id TEXT PRIMARY KEY, code TEXT UNIQUE NOT NULL,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','completed','expired')),
+    expires_at TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT NOW()
+  )`);
+  await query('CREATE INDEX IF NOT EXISTS idx_users_google_id ON users(google_id)');
+  await query('CREATE INDEX IF NOT EXISTS idx_users_api_key ON users(api_key)');
+  await query('CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id)');
+  await query('CREATE INDEX IF NOT EXISTS idx_sessions_token ON sessions(token)');
+  await query('CREATE INDEX IF NOT EXISTS idx_one_time_codes_code ON one_time_codes(code)');
+  await query('CREATE INDEX IF NOT EXISTS idx_one_time_codes_user_id ON one_time_codes(user_id)');
+  await query('CREATE INDEX IF NOT EXISTS idx_one_time_codes_status ON one_time_codes(status)');
+  await query(`CREATE TABLE IF NOT EXISTS gateway_tokens (
+    id TEXT PRIMARY KEY, player_id TEXT NOT NULL,
+    provider TEXT NOT NULL CHECK(provider IN ('linkvertise','lootlabs')),
+    admin_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','completed','expired')),
+    code TEXT, created_at TEXT NOT NULL DEFAULT NOW(), completed_at TEXT, ad_url TEXT
+  )`);
+  await query('CREATE INDEX IF NOT EXISTS idx_gateway_tokens_status ON gateway_tokens(status)');
+  await query('CREATE INDEX IF NOT EXISTS idx_gateway_tokens_admin ON gateway_tokens(admin_user_id)');
   console.log('Database migrations applied');
 }
 
@@ -142,17 +113,17 @@ passport.use(new GoogleStrategy({
   clientID: ENV.GOOGLE_CLIENT_ID,
   clientSecret: ENV.GOOGLE_CLIENT_SECRET,
   callbackURL: ENV.GOOGLE_CALLBACK_URL,
-}, (accessToken, refreshToken, profile, done) => {
+}, async (accessToken, refreshToken, profile, done) => {
   try {
     const googleId = profile.id;
     const email = profile.emails?.[0]?.value || '';
     const name = profile.displayName || '';
-    const existing = getOne('SELECT * FROM users WHERE google_id = ?', [googleId]);
+    const existing = await getOne('SELECT * FROM users WHERE google_id = $1', [googleId]);
 
     if (!existing) {
       const id = crypto.randomUUID();
       const apiKey = crypto.randomUUID();
-      run('INSERT INTO users (id, google_id, email, name, api_key, created_at) VALUES (?, ?, ?, ?, ?, ?)', [id, googleId, email, name, apiKey, new Date().toISOString()]);
+      await run('INSERT INTO users (id, google_id, email, name, api_key, created_at) VALUES ($1, $2, $3, $4, $5, NOW())', [id, googleId, email, name, apiKey]);
       const user = { id, google_id: googleId, email, name, api_key: apiKey, unlocked_until: null };
       return done(null, { user, isNew: true });
     }
@@ -172,19 +143,19 @@ app.use(passport.initialize());
 app.use(passport.session());
 
 passport.serializeUser((data, done) => done(null, JSON.stringify({ id: data.user.id, isNew: data.isNew })));
-passport.deserializeUser((raw, done) => {
+passport.deserializeUser(async (raw, done) => {
   try {
     const { id } = JSON.parse(raw);
-    done(null, getOne('SELECT * FROM users WHERE id = ?', [id]) || null);
+    done(null, (await getOne('SELECT * FROM users WHERE id = $1', [id])) || null);
   } catch (err) { done(err, null); }
 });
 
-function requireAuth(req, res, next) {
+async function requireAuth(req, res, next) {
   const auth = req.headers.authorization;
   if (!auth?.startsWith('Bearer ')) return res.status(401).json({ error: 'Unauthorized' });
   try {
     const payload = jwt.verify(auth.slice(7), ENV.JWT_SECRET);
-    const user = getOne('SELECT * FROM users WHERE id = ?', [payload.userId]);
+    const user = await getOne('SELECT * FROM users WHERE id = $1', [payload.userId]);
     if (!user) return res.status(401).json({ error: 'User not found' });
     req.user = user;
     next();
@@ -201,11 +172,11 @@ app.get('/api/v1/auth/google/callback', passport.authenticate('google', { sessio
     : `${ENV.WEB_APP_URL}/dashboard?token=${token}`);
 });
 
-app.get('/api/v1/auth/me', requireAuth, (req, res) => {
-  res.json(getOne('SELECT id, google_id, email, name, api_key, unlocked_until, created_at FROM users WHERE id = ?', [req.user.id]));
+app.get('/api/v1/auth/me', requireAuth, async (req, res) => {
+  res.json(await getOne('SELECT id, google_id, email, name, api_key, unlocked_until, created_at FROM users WHERE id = $1', [req.user.id]));
 });
 
-app.post('/api/v1/ads/generate', requireAuth, (req, res) => {
+app.post('/api/v1/ads/generate', requireAuth, async (req, res) => {
   try {
     const sessionId = crypto.randomUUID();
     const callbackId = crypto.randomBytes(8).toString('hex');
@@ -219,7 +190,8 @@ app.post('/api/v1/ads/generate', requireAuth, (req, res) => {
       ? `https://loot-link.com/s?api=${ENV.LOOTLABS_API_KEY}&url=${encodeURIComponent(targetUrl)}`
       : null;
 
-    run('INSERT INTO sessions (id, user_id, token, expires_at) VALUES (?, ?, ?, ?)', [sessionId, req.user.id, callbackId, new Date(Date.now() + 3600000).toISOString()]);
+    await run('INSERT INTO sessions (id, user_id, token, expires_at) VALUES ($1, $2, $3, $4)',
+      [sessionId, req.user.id, callbackId, new Date(Date.now() + 3600000).toISOString()]);
     res.json({ sessionId, callbackId, links: { linkvertise: linkvertiseUrl, lootlabs: lootlabsUrl }, expiresAt: new Date(Date.now() + 3600000).toISOString() });
   } catch (err) {
     console.error('Ad generation error:', err);
@@ -262,7 +234,7 @@ app.post('/api/v1/generate-token', requireAuth, async (req, res) => {
     const { playerId, provider } = req.body;
     if (!playerId || !provider) return res.status(400).json({ error: 'playerId and provider are required' });
     if (!['linkvertise', 'lootlabs'].includes(provider)) return res.status(400).json({ error: 'provider must be linkvertise or lootlabs' });
-    const count = getOne('SELECT COUNT(*) as count FROM gateway_tokens WHERE admin_user_id = ?', [req.user.id]);
+    const count = await getOne('SELECT COUNT(*) as count FROM gateway_tokens WHERE admin_user_id = $1', [req.user.id]);
     if (count && count.count >= 10) return res.status(400).json({ error: 'Limit reached. You can only create up to 10 gateway links.' });
     const token = crypto.randomBytes(16).toString('hex');
     const callbackUrl = `${req.protocol}://${req.get('host')}/api/v1/ad-callback?token=${token}`;
@@ -274,7 +246,7 @@ app.post('/api/v1/generate-token', requireAuth, async (req, res) => {
       adUrl = await createLootLabsUrl(callbackUrl);
     }
 
-    run('INSERT INTO gateway_tokens (id, player_id, provider, admin_user_id, status, ad_url) VALUES (?, ?, ?, ?, ?, ?)',
+    await run('INSERT INTO gateway_tokens (id, player_id, provider, admin_user_id, status, ad_url) VALUES ($1, $2, $3, $4, $5, $6)',
       [token, playerId, provider, req.user.id, 'pending', adUrl || '']);
     const verifyApiUrl = `${req.protocol}://${req.get('host')}/api/v1/verify-key?player_id=${encodeURIComponent(playerId)}`;
     res.json({ token, gatewayUrl: `${ENV.WEB_APP_URL}/gateway/${token}`, verifyApiUrl });
@@ -284,9 +256,9 @@ app.post('/api/v1/generate-token', requireAuth, async (req, res) => {
   }
 });
 
-app.get('/api/v1/gateway-tokens', requireAuth, (req, res) => {
+app.get('/api/v1/gateway-tokens', requireAuth, async (req, res) => {
   try {
-    const tokens = getAll('SELECT * FROM gateway_tokens WHERE admin_user_id = ? ORDER BY created_at DESC', [req.user.id]);
+    const tokens = await getAll('SELECT * FROM gateway_tokens WHERE admin_user_id = $1 ORDER BY created_at DESC', [req.user.id]);
     res.json(tokens);
   } catch (err) {
     console.error('List tokens error:', err);
@@ -294,10 +266,10 @@ app.get('/api/v1/gateway-tokens', requireAuth, (req, res) => {
   }
 });
 
-app.get('/api/v1/gateway-token/:token', (req, res) => {
+app.get('/api/v1/gateway-token/:token', async (req, res) => {
   try {
     const { token } = req.params;
-    const gt = getOne('SELECT * FROM gateway_tokens WHERE id = ?', [token]);
+    const gt = await getOne('SELECT * FROM gateway_tokens WHERE id = $1', [token]);
     if (!gt) return res.status(404).json({ error: 'Token not found' });
     if (!gt.ad_url) return res.status(500).json({ error: 'Ad URL not configured for this token' });
     res.json({ provider: gt.provider, playerId: gt.player_id, adUrl: gt.ad_url, status: gt.status });
@@ -307,13 +279,13 @@ app.get('/api/v1/gateway-token/:token', (req, res) => {
   }
 });
 
-app.get('/api/v1/gateway-token/:token/status', (req, res) => {
+app.get('/api/v1/gateway-token/:token/status', async (req, res) => {
   try {
     const { token } = req.params;
-    const gt = getOne('SELECT * FROM gateway_tokens WHERE id = ?', [token]);
+    const gt = await getOne('SELECT * FROM gateway_tokens WHERE id = $1', [token]);
     if (!gt) return res.status(404).json({ error: 'Token not found' });
     if (gt.status !== 'completed') return res.json({ status: gt.status, code: null, playerId: gt.player_id });
-    const admin = getOne('SELECT id, name, api_key FROM users WHERE id = ?', [gt.admin_user_id]);
+    const admin = await getOne('SELECT id, name, api_key FROM users WHERE id = $1', [gt.admin_user_id]);
     res.json({ status: gt.status, code: gt.code, playerId: gt.player_id, adminName: admin?.name || 'User', apiKey: admin?.api_key || '' });
   } catch (err) {
     console.error('Gateway token status error:', err);
@@ -321,24 +293,25 @@ app.get('/api/v1/gateway-token/:token/status', (req, res) => {
   }
 });
 
-app.get('/api/v1/ad-callback', (req, res) => {
+app.get('/api/v1/ad-callback', async (req, res) => {
   try {
     const { cb, uid, token } = req.query;
     if (token) {
-      const gt = getOne("SELECT * FROM gateway_tokens WHERE id = ? AND status = 'pending'", [token]);
+      const gt = await getOne("SELECT * FROM gateway_tokens WHERE id = $1 AND status = 'pending'", [token]);
       if (!gt) return res.status(404).json({ error: 'Invalid or expired token' });
       const code = generateOneTimeCode();
-      run('UPDATE gateway_tokens SET status = ?, code = ?, completed_at = ? WHERE id = ?', ['completed', code, new Date().toISOString(), token]);
-      run('UPDATE users SET unlocked_until = ? WHERE id = ?', [new Date(Date.now() + 86400000).toISOString(), gt.admin_user_id]);
-      const admin = getOne('SELECT id, name, api_key FROM users WHERE id = ?', [gt.admin_user_id]);
+      await run('UPDATE gateway_tokens SET status = $1, code = $2, completed_at = NOW() WHERE id = $3', ['completed', code, token]);
+      await run('UPDATE users SET unlocked_until = $1 WHERE id = $2', [new Date(Date.now() + 86400000).toISOString(), gt.admin_user_id]);
+      const admin = await getOne('SELECT id, name, api_key FROM users WHERE id = $1', [gt.admin_user_id]);
       return res.redirect(`${ENV.WEB_APP_URL}/gateway/${token}/success?name=${encodeURIComponent(admin?.name || 'User')}&key=${admin?.api_key || ''}&code=${code}`);
     }
     if (!cb || !uid) return res.status(400).json({ error: 'Missing parameters' });
-    const session = getOne("SELECT * FROM sessions WHERE token = ? AND user_id = ? AND expires_at > datetime('now')", [cb, uid]);
+    const session = await getOne("SELECT * FROM sessions WHERE token = $1 AND user_id = $2 AND expires_at > NOW()", [cb, uid]);
     if (!session) return res.status(404).json({ error: 'Invalid or expired session' });
     const code = generateOneTimeCode();
-    run("INSERT INTO one_time_codes (id, code, user_id, session_id, status, expires_at, created_at) VALUES (?, ?, ?, ?, 'completed', ?, ?)", [crypto.randomUUID(), code, uid, session.id, new Date(Date.now() + 86400000).toISOString(), new Date().toISOString()]);
-    run('UPDATE users SET unlocked_until = ? WHERE id = ?', [new Date(Date.now() + 86400000).toISOString(), uid]);
+    await run("INSERT INTO one_time_codes (id, code, user_id, session_id, status, expires_at, created_at) VALUES ($1, $2, $3, $4, 'completed', $5, NOW())",
+      [crypto.randomUUID(), code, uid, session.id, new Date(Date.now() + 86400000).toISOString()]);
+    await run('UPDATE users SET unlocked_until = $1 WHERE id = $2', [new Date(Date.now() + 86400000).toISOString(), uid]);
     res.json({ success: true, code, message: 'Ad verification completed. Your code is ready.' });
   } catch (err) {
     console.error('Callback error:', err);
@@ -346,11 +319,11 @@ app.get('/api/v1/ad-callback', (req, res) => {
   }
 });
 
-app.post('/api/v1/validation/check', requireAuth, (req, res) => {
+app.post('/api/v1/validation/check', requireAuth, async (req, res) => {
   try {
     const { code } = req.body;
     if (!code) return res.status(400).json({ error: 'Code is required' });
-    const codeResult = getOne("SELECT * FROM one_time_codes WHERE code = ? AND user_id = ? AND status = 'completed' AND expires_at > datetime('now') ORDER BY created_at DESC LIMIT 1", [code.toUpperCase(), req.user.id]);
+    const codeResult = await getOne("SELECT * FROM one_time_codes WHERE code = $1 AND user_id = $2 AND status = 'completed' AND expires_at > NOW() ORDER BY created_at DESC LIMIT 1", [code.toUpperCase(), req.user.id]);
     if (!codeResult) return res.status(404).json({ error: 'Invalid, expired, or already used code' });
     res.json({ valid: true, unlockedUntil: req.user.unlocked_until, message: 'Key is valid. Account unlocked for 24 hours.' });
   } catch (err) {
@@ -359,26 +332,26 @@ app.post('/api/v1/validation/check', requireAuth, (req, res) => {
   }
 });
 
-app.get('/api/v1/validation/status', requireAuth, (req, res) => {
+app.get('/api/v1/validation/status', requireAuth, async (req, res) => {
   const isUnlocked = req.user.unlocked_until && new Date(req.user.unlocked_until) > new Date();
   if (isUnlocked) {
-    const validCode = getOne("SELECT code FROM one_time_codes WHERE user_id = ? AND status = 'completed' AND expires_at > datetime('now') ORDER BY created_at DESC LIMIT 1", [req.user.id]);
+    const validCode = await getOne("SELECT code FROM one_time_codes WHERE user_id = $1 AND status = 'completed' AND expires_at > NOW() ORDER BY created_at DESC LIMIT 1", [req.user.id]);
     res.json({ unlocked: true, unlockedUntil: req.user.unlocked_until, code: validCode?.code || null });
   } else {
     res.json({ unlocked: false, unlockedUntil: null, code: null });
   }
 });
 
-app.get('/api/v1/verify-key', (req, res) => {
+app.get('/api/v1/verify-key', async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   const { player_id, key } = req.query;
   if (!player_id || !key) return res.json({ success: false, error: 'Missing player_id or key parameter' });
   try {
-    const codeResult = getOne("SELECT * FROM one_time_codes WHERE code = ? AND status = 'completed' AND expires_at > datetime('now')", [key.toUpperCase()]);
+    const codeResult = await getOne("SELECT * FROM one_time_codes WHERE code = $1 AND status = 'completed' AND expires_at > NOW()", [key.toUpperCase()]);
     if (codeResult) {
-      run("UPDATE one_time_codes SET status = 'expired' WHERE id = ?", [codeResult.id]);
+      await run("UPDATE one_time_codes SET status = 'expired' WHERE id = $1", [codeResult.id]);
       res.json({ success: true, message: 'Key is valid — consumed', playerId: player_id });
     } else {
       res.json({ success: false, error: 'Incorrect or Expired Key!' });
@@ -403,22 +376,13 @@ app.use((err, req, res, next) => {
 });
 
 async function start() {
-  const SQL = await initSqlJs();
-  const dbDir = path.dirname(ENV.DATABASE_PATH);
-  if (!fs.existsSync(dbDir)) fs.mkdirSync(dbDir, { recursive: true });
-  if (fs.existsSync(ENV.DATABASE_PATH)) {
-    const fileBuffer = fs.readFileSync(ENV.DATABASE_PATH);
-    db = new SQL.Database(fileBuffer);
-  } else {
-    db = new SQL.Database();
-  }
-  runMigrations();
+  await runMigrations();
   app.listen(ENV.PORT, () => {
     console.log(`Extoboost backend running on port ${ENV.PORT}`);
-    console.log(`Database: ${ENV.DATABASE_PATH}`);
+    console.log(`Database: PostgreSQL`);
   });
 }
 
-start();
+start().catch(err => { console.error('Failed to start server:', err); process.exit(1); });
 
 module.exports = app;
