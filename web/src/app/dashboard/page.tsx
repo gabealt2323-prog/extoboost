@@ -159,7 +159,7 @@ function DashboardContent() {
   return (
     <>
       <div className="min-h-screen bg-surface">
-        <NavBar userName={user?.email} onSignOut={handleSignOut} />
+        <NavBar userName={user?.email} user={user} onSignOut={handleSignOut} onUserUpdate={(u) => setUser(u)} />
         <main className="max-w-5xl mx-auto px-6 py-12 space-y-8">
           <div className="flex items-center justify-between">
             <div>

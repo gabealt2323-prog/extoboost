@@ -88,6 +88,7 @@ async function runMigrations() {
     verified BOOLEAN NOT NULL DEFAULT FALSE, created_at TEXT NOT NULL DEFAULT NOW()
   )`);
   try { await query("ALTER TABLE users ADD COLUMN verified BOOLEAN NOT NULL DEFAULT FALSE"); } catch {}
+  try { await query("ALTER TABLE users ADD COLUMN profile_icon TEXT NOT NULL DEFAULT 'default'"); } catch {}
   await query(`CREATE TABLE IF NOT EXISTS sessions (
     id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     token TEXT UNIQUE NOT NULL, expires_at TEXT NOT NULL,
@@ -191,7 +192,7 @@ app.get('/api/v1/auth/google/callback', passport.authenticate('google', { sessio
 });
 
 app.get('/api/v1/auth/me', requireAuth, async (req, res) => {
-  res.json(await getOne('SELECT id, google_id, email, name, api_key, unlocked_until, verified, created_at FROM users WHERE id = $1', [req.user.id]));
+  res.json(await getOne('SELECT id, google_id, email, name, api_key, unlocked_until, verified, profile_icon, created_at FROM users WHERE id = $1', [req.user.id]));
 });
 
 app.post('/api/v1/ads/generate', requireAuth, async (req, res) => {
@@ -412,6 +413,24 @@ app.post('/api/v1/verify-email', requireAuth, async (req, res) => {
     await run('UPDATE users SET verified = TRUE WHERE id = $1', [req.user.id]);
     res.json({ verified: true });
   } catch { res.status(500).json({ error: 'Verification failed' }); }
+});
+
+app.put('/api/v1/auth/me', requireAuth, async (req, res) => {
+  try {
+    const { name, profile_icon } = req.body;
+    if (name) await run('UPDATE users SET name = $1 WHERE id = $2', [name, req.user.id]);
+    if (profile_icon) await run('UPDATE users SET profile_icon = $1 WHERE id = $2', [profile_icon, req.user.id]);
+    res.json(await getOne('SELECT id, google_id, email, name, api_key, unlocked_until, verified, profile_icon, created_at FROM users WHERE id = $1', [req.user.id]));
+  } catch { res.status(500).json({ error: 'Failed to update profile' }); }
+});
+
+app.post('/api/v1/auth/regenerate-api-key', requireAuth, async (req, res) => {
+  try {
+    const newKey = crypto.randomUUID();
+    await run('UPDATE users SET api_key = $1 WHERE id = $2', [newKey, req.user.id]);
+    const user = await getOne('SELECT id, google_id, email, name, api_key, unlocked_until, verified, profile_icon, created_at FROM users WHERE id = $1', [req.user.id]);
+    res.json({ api_key: user.api_key });
+  } catch { res.status(500).json({ error: 'Failed to regenerate API key' }); }
 });
 
 app.get('/api/v1/health', (req, res) => {
