@@ -1,0 +1,58 @@
+{
+  "name": "extoboost-desktop",
+  "version": "1.0.0",
+  "description": "Extoboost Key System - Desktop Application",
+  "main": "main.js",
+  "author": "Extoboost",
+  "license": "MIT",
+  "scripts": {
+    "dev": "electron .",
+    "start": "electron .",
+    "build": "electron-builder",
+    "dist": "electron-builder --win --x64",
+    "dist-all": "electron-builder --win --x64 --ia32"
+  },
+  "build": {
+    "appId": "com.extoboost.keysystem",
+    "productName": "Extoboost",
+    "directories": {
+      "output": "release"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        }
+      ],
+      "icon": null,
+      "artifactName": "Extoboost-Setup-${version}-${arch}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "runAfterFinish": true,
+      "installerIcon": null,
+      "uninstallerIcon": null,
+      "installerHeader": null,
+      "installerSidebar": null,
+      "uninstallDisplayName": "Extoboost Key System",
+      "license": null,
+      "allowElevation": true,
+      "shortcutName": "Extoboost",
+      "include": "build/installer.nsh"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "package.json"
+    ]
+  },
+  "devDependencies": {
+    "electron": "^33.3.1",
+    "electron-builder": "^25.1.8"
+  }
+}
