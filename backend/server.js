@@ -38,7 +38,12 @@ const pool = new Pool({ connectionString: ENV.DATABASE_URL, ssl: { rejectUnautho
 const mailer = nodemailer.createTransport({
   host: ENV.SMTP_HOST, port: ENV.SMTP_PORT, secure: ENV.SMTP_PORT === 465,
   auth: ENV.SMTP_USER ? { user: ENV.SMTP_USER, pass: ENV.SMTP_PASS } : undefined,
+  tls: { rejectUnauthorized: false },
 });
+
+if (ENV.SMTP_USER) {
+  mailer.verify().then(() => console.log('SMTP connection OK')).catch(err => console.error('SMTP connection FAILED:', err.message));
+}
 
 function adaptSql(sql) {
   let idx = 0;
@@ -416,11 +421,11 @@ app.post('/api/v1/send-verification', requireAuth, async (req, res) => {
     if (ENV.SMTP_USER) {
       console.log('Attempting to send email to', req.user.email, 'via', ENV.SMTP_HOST);
       mailer.sendMail({
-        from: ENV.EMAIL_FROM, to: req.user.email,
+        from: ENV.SMTP_USER, to: req.user.email,
         subject: 'Extoboost - Email Verification Code',
         text: `Your verification code is: ${code}\n\nThis code expires in 10 minutes.`,
       }).then(() => console.log('Email sent successfully to', req.user.email))
-        .catch(err => console.error('Mail send error:', err));
+        .catch(err => console.error('Mail send error - full:', err.message || err));
       res.json({ sent: true, debug: 'smtp_attempted' });
     } else {
       console.warn('SMTP_USER not configured — email not sent to', req.user.email);
