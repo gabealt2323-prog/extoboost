@@ -10,6 +10,7 @@ const path = require('path');
 const fs = require('fs');
 const https = require('https');
 const { Pool } = require('pg');
+const nodemailer = require('nodemailer');
 
 require('dotenv').config({ path: path.resolve(__dirname, '.env') });
 
@@ -25,9 +26,19 @@ const ENV = {
   LINKVERTISE_PUBLISHER_ID: process.env.LINKVERTISE_PUBLISHER_ID || '',
   LOOTLABS_API_KEY: process.env.LOOTLABS_API_KEY || '',
   WEB_APP_URL: process.env.WEB_APP_URL || 'http://localhost:3000',
+  SMTP_HOST: process.env.SMTP_HOST || 'smtp.gmail.com',
+  SMTP_PORT: parseInt(process.env.SMTP_PORT || '587', 10),
+  SMTP_USER: process.env.SMTP_USER || '',
+  SMTP_PASS: process.env.SMTP_PASS || '',
+  EMAIL_FROM: process.env.EMAIL_FROM || 'noreply@extoboost.com',
 };
 
 const pool = new Pool({ connectionString: ENV.DATABASE_URL, ssl: { rejectUnauthorized: false } });
+
+const mailer = nodemailer.createTransport({
+  host: ENV.SMTP_HOST, port: ENV.SMTP_PORT, secure: ENV.SMTP_PORT === 465,
+  auth: ENV.SMTP_USER ? { user: ENV.SMTP_USER, pass: ENV.SMTP_PASS } : undefined,
+});
 
 function adaptSql(sql) {
   let idx = 0;
@@ -74,8 +85,9 @@ async function runMigrations() {
   await query(`CREATE TABLE IF NOT EXISTS users (
     id TEXT PRIMARY KEY, google_id TEXT UNIQUE NOT NULL, email TEXT UNIQUE NOT NULL,
     name TEXT NOT NULL, api_key TEXT UNIQUE NOT NULL, unlocked_until TEXT,
-    created_at TEXT NOT NULL DEFAULT NOW()
+    verified BOOLEAN NOT NULL DEFAULT FALSE, created_at TEXT NOT NULL DEFAULT NOW()
   )`);
+  try { await query("ALTER TABLE users ADD COLUMN verified BOOLEAN NOT NULL DEFAULT FALSE"); } catch {}
   await query(`CREATE TABLE IF NOT EXISTS sessions (
     id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     token TEXT UNIQUE NOT NULL, expires_at TEXT NOT NULL,
@@ -95,6 +107,12 @@ async function runMigrations() {
   await query('CREATE INDEX IF NOT EXISTS idx_one_time_codes_code ON one_time_codes(code)');
   await query('CREATE INDEX IF NOT EXISTS idx_one_time_codes_user_id ON one_time_codes(user_id)');
   await query('CREATE INDEX IF NOT EXISTS idx_one_time_codes_status ON one_time_codes(status)');
+  await query(`CREATE TABLE IF NOT EXISTS email_verification_codes (
+    id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    code TEXT NOT NULL, expires_at TEXT NOT NULL, used BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TEXT NOT NULL DEFAULT NOW()
+  )`);
+  await query('CREATE INDEX IF NOT EXISTS idx_email_verification_codes_user_id ON email_verification_codes(user_id)');
   await query(`CREATE TABLE IF NOT EXISTS gateway_tokens (
     id TEXT PRIMARY KEY, player_id TEXT NOT NULL,
     provider TEXT NOT NULL CHECK(provider IN ('linkvertise','lootlabs')),
@@ -173,7 +191,7 @@ app.get('/api/v1/auth/google/callback', passport.authenticate('google', { sessio
 });
 
 app.get('/api/v1/auth/me', requireAuth, async (req, res) => {
-  res.json(await getOne('SELECT id, google_id, email, name, api_key, unlocked_until, created_at FROM users WHERE id = $1', [req.user.id]));
+  res.json(await getOne('SELECT id, google_id, email, name, api_key, unlocked_until, verified, created_at FROM users WHERE id = $1', [req.user.id]));
 });
 
 app.post('/api/v1/ads/generate', requireAuth, async (req, res) => {
@@ -364,6 +382,36 @@ app.options('/api/v1/verify-key', (req, res) => {
   res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   res.sendStatus(204);
+});
+
+app.post('/api/v1/send-verification', requireAuth, async (req, res) => {
+  try {
+    if (req.user.verified) return res.json({ sent: false, error: 'Already verified' });
+    const code = String(Math.floor(100000 + Math.random() * 900000));
+    const expiresAt = new Date(Date.now() + 600000).toISOString();
+    await run('INSERT INTO email_verification_codes (id, user_id, code, expires_at) VALUES ($1, $2, $3, $4)',
+      [crypto.randomUUID(), req.user.id, code, expiresAt]);
+    if (ENV.SMTP_USER) {
+      await mailer.sendMail({
+        from: ENV.EMAIL_FROM, to: req.user.email,
+        subject: 'Extoboost - Email Verification Code',
+        text: `Your verification code is: ${code}\n\nThis code expires in 10 minutes.`,
+      });
+    }
+    res.json({ sent: true });
+  } catch { res.status(500).json({ sent: false, error: 'Failed to send verification email' }); }
+});
+
+app.post('/api/v1/verify-email', requireAuth, async (req, res) => {
+  try {
+    const { code } = req.body;
+    if (!code) return res.status(400).json({ error: 'Code is required' });
+    const row = await getOne("SELECT * FROM email_verification_codes WHERE user_id = $1 AND code = $2 AND used = FALSE AND expires_at > NOW() ORDER BY created_at DESC LIMIT 1", [req.user.id, code]);
+    if (!row) return res.status(400).json({ error: 'Invalid or expired code' });
+    await run("UPDATE email_verification_codes SET used = TRUE WHERE id = $1", [row.id]);
+    await run('UPDATE users SET verified = TRUE WHERE id = $1', [req.user.id]);
+    res.json({ verified: true });
+  } catch { res.status(500).json({ error: 'Verification failed' }); }
 });
 
 app.get('/api/v1/health', (req, res) => {

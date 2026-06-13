@@ -20,6 +20,10 @@ function DashboardContent() {
   const [verifyUrl, setVerifyUrl] = useState('');
   const [copied, setCopied] = useState('');
   const [savedLinks, setSavedLinks] = useState<any[]>([]);
+  const [verifyState, setVerifyState] = useState<'idle'|'sending'|'sent'|'verifying'>('idle');
+  const [verifyCode, setVerifyCode] = useState('');
+  const [verifyError, setVerifyError] = useState('');
+  const [showVerifyPopup, setShowVerifyPopup] = useState(false);
 
   const fetchSavedLinks = async () => {
     const token = localStorage.getItem('ks_token');
@@ -130,13 +134,64 @@ function DashboardContent() {
               <h2 className="text-3xl font-bold text-white">Welcome, {user?.name}</h2>
               <p className="text-gray-400 mt-1">Generate and manage player gateway links</p>
             </div>
-            {isUnlocked ? (
+            {user?.verified ? (
               <div className="px-4 py-2 rounded-full bg-green-500/10 border border-green-500/30 text-green-400 text-sm font-medium">
-                Unlocked
+                Verified
               </div>
             ) : (
-              <div className="px-4 py-2 rounded-full bg-yellow-500/10 border border-yellow-500/30 text-yellow-400 text-sm font-medium">
-                Not Verified
+              <div className="flex items-center gap-3">
+                <div className="px-4 py-2 rounded-full bg-yellow-500/10 border border-yellow-500/30 text-yellow-400 text-sm font-medium">
+                  Not Verified
+                </div>
+                {verifyState === 'idle' && (
+                  <button onClick={async () => {
+                    setVerifyState('sending');
+                    setVerifyError('');
+                    try {
+                      const token = localStorage.getItem('ks_token');
+                      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/send-verification`, {
+                        method: 'POST', headers: { Authorization: `Bearer ${token}` },
+                      });
+                      const data = await res.json();
+                      if (data.error) { setVerifyError(data.error); setVerifyState('idle'); return; }
+                      setVerifyState('sent');
+                    } catch { setVerifyError('Failed to send'); setVerifyState('idle'); }
+                  }} className="px-4 py-2 bg-primary-600 hover:bg-primary-700 text-white text-sm font-medium rounded-full transition-colors">
+                    Verify Email
+                  </button>
+                )}
+                {verifyState === 'sending' && (
+                  <div className="px-4 py-2 rounded-full bg-surface-200 text-gray-400 text-sm">Sending...</div>
+                )}
+                {verifyState === 'sent' && (
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text" maxLength={6} placeholder="Enter 6-digit code"
+                      value={verifyCode} onChange={(e) => setVerifyCode(e.target.value.replace(/\D/g, ''))}
+                      className="w-36 px-3 py-2 bg-surface border border-surface-300 rounded-lg text-white text-sm text-center placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-primary-500"
+                    />
+                    <button onClick={async () => {
+                      if (verifyCode.length !== 6) return;
+                      setVerifyState('verifying');
+                      setVerifyError('');
+                      try {
+                        const token = localStorage.getItem('ks_token');
+                        const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/verify-email`, {
+                          method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ code: verifyCode }),
+                        });
+                        const data = await res.json();
+                        if (data.error) { setVerifyError(data.error); setVerifyState('sent'); return; }
+                        setUser({ ...user, verified: true });
+                        setVerifyState('idle');
+                        setVerifyCode('');
+                      } catch { setVerifyError('Verification failed'); setVerifyState('sent'); }
+                    }} disabled={verifyCode.length !== 6} className="px-3 py-2 bg-green-600 hover:bg-green-700 disabled:bg-green-600/50 disabled:cursor-not-allowed text-white text-sm font-medium rounded-lg transition-colors">
+                      {verifyState === 'verifying' ? '...' : 'Submit'}
+                    </button>
+                  </div>
+                )}
+                {verifyError && <span className="text-red-400 text-sm">{verifyError}</span>}
               </div>
             )}
           </div>
@@ -157,7 +212,7 @@ function DashboardContent() {
             <p className="text-xs text-gray-500">Your unique API key for programmatic access</p>
           </div>
 
-          <div className="p-6 rounded-2xl bg-surface-100 border border-surface-300 space-y-6">
+          <div className={`p-6 rounded-2xl bg-surface-100 border border-surface-300 space-y-6 ${!user?.verified ? 'opacity-40 pointer-events-none' : ''}`}>
             <h3 className="text-lg font-semibold text-white">Generate Player Gateway Link</h3>
             <p className="text-sm text-gray-400">
               Create a shareable gateway link for a player. They will complete an ad to receive their verification key.
@@ -188,7 +243,10 @@ function DashboardContent() {
             </div>
 
             <button
-              onClick={handleGenerate}
+              onClick={() => {
+                if (!user?.verified) { setShowVerifyPopup(true); return; }
+                handleGenerate();
+              }}
               disabled={generating || !playerId.trim()}
               className="w-full px-8 py-3 bg-primary-600 hover:bg-primary-700 disabled:bg-primary-600/50 disabled:cursor-not-allowed text-white font-semibold rounded-xl transition-colors flex items-center gap-2 justify-center"
             >
@@ -279,10 +337,11 @@ function DashboardContent() {
             </div>
           )}
 
-          {isUnlocked && (
+          {(isUnlocked || user?.verified) && (
             <div className="p-6 rounded-2xl bg-surface-100 border border-surface-300 space-y-4">
               <h3 className="text-lg font-semibold text-white">Verification Status</h3>
-              <p className="text-green-400">System is unlocked</p>
+              {user?.verified && <p className="text-green-400">Email verified</p>}
+              {isUnlocked && <p className="text-green-400">System is unlocked</p>}
               <p className="text-sm text-gray-400">
                 Valid until: {new Date(user.unlocked_until).toLocaleString()}
               </p>
@@ -290,6 +349,21 @@ function DashboardContent() {
           )}
         </main>
       </div>
+
+      {showVerifyPopup && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => setShowVerifyPopup(false)}>
+          <div className="p-8 rounded-2xl bg-surface-100 border border-surface-300 max-w-md w-full mx-4 space-y-4" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-xl font-bold text-white">Email Not Verified</h3>
+            <p className="text-gray-400 text-sm">Your email is not verified. Please verify using the button below to access Player Gateway.</p>
+            <button onClick={() => {
+              setShowVerifyPopup(false);
+              window.scrollTo({ top: 0, behavior: 'smooth' });
+            }} className="w-full px-6 py-3 bg-primary-600 hover:bg-primary-700 text-white font-semibold rounded-xl transition-colors">
+              Verify Now
+            </button>
+          </div>
+        </div>
+      )}
 
       {showApiKey && (
         <ApiKeyModal
