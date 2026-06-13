@@ -10,7 +10,6 @@ const path = require('path');
 const fs = require('fs');
 const https = require('https');
 const { Pool } = require('pg');
-const nodemailer = require('nodemailer');
 
 require('dotenv').config({ path: path.resolve(__dirname, '.env') });
 
@@ -35,14 +34,23 @@ const ENV = {
 
 const pool = new Pool({ connectionString: ENV.DATABASE_URL, ssl: { rejectUnauthorized: false } });
 
-const mailer = nodemailer.createTransport({
-  host: ENV.SMTP_HOST, port: ENV.SMTP_PORT, secure: ENV.SMTP_PORT === 465,
-  auth: ENV.SMTP_USER ? { user: ENV.SMTP_USER, pass: ENV.SMTP_PASS } : undefined,
-  tls: { rejectUnauthorized: false },
-});
+const SMTP_PASS = ENV.SMTP_PASS;
 
-if (ENV.SMTP_USER) {
-  mailer.verify().then(() => console.log('SMTP connection OK')).catch(err => console.error('SMTP connection FAILED:', err.message));
+function sendEmailViaBrevo(to, subject, text) {
+  return new Promise((resolve, reject) => {
+    const data = JSON.stringify({ sender: { email: ENV.SMTP_USER || 'noreply@extoboost.com' }, to: [{ email: to }], subject, textContent: text });
+    const req = https.request('https://api.brevo.com/v3/smtp/email', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'api-key': SMTP_PASS, 'Content-Length': Buffer.byteLength(data) },
+    }, (res) => {
+      let body = '';
+      res.on('data', (chunk) => body += chunk);
+      res.on('end', () => { resolve(body); });
+    });
+    req.on('error', reject);
+    req.write(data);
+    req.end();
+  });
 }
 
 function adaptSql(sql) {
@@ -419,13 +427,10 @@ app.post('/api/v1/send-verification', requireAuth, async (req, res) => {
     await run('INSERT INTO email_verification_codes (id, user_id, code, expires_at) VALUES ($1, $2, $3, $4)',
       [crypto.randomUUID(), req.user.id, code, expiresAt]);
     if (ENV.SMTP_USER) {
-      console.log('Attempting to send email to', req.user.email, 'via', ENV.SMTP_HOST);
-      mailer.sendMail({
-        from: ENV.SMTP_USER, to: req.user.email,
-        subject: 'Extoboost - Email Verification Code',
-        text: `Your verification code is: ${code}\n\nThis code expires in 10 minutes.`,
-      }).then(() => console.log('Email sent successfully to', req.user.email))
-        .catch(err => console.error('Mail send error - full:', err.message || err));
+      console.log('Attempting to send email to', req.user.email, 'via Brevo API');
+      sendEmailViaBrevo(req.user.email, 'Extoboost - Email Verification Code', `Your verification code is: ${code}\n\nThis code expires in 10 minutes.`)
+        .then(() => console.log('Email sent successfully to', req.user.email))
+        .catch(err => console.error('Brevo API error:', err.message || err));
       res.json({ sent: true, debug: 'smtp_attempted' });
     } else {
       console.warn('SMTP_USER not configured — email not sent to', req.user.email);
